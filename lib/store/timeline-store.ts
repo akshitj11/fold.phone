@@ -1,14 +1,15 @@
 import type { MoodType } from '@/components/mood';
 import {
-  createTimelineEntry,
   deleteTimelineEntry,
   getOnThisDayEntries,
   getTimelineEntries,
-  type CreateEntryPayload,
   type OnThisDayGroup,
   type TimelineEntryResponse,
 } from '@/lib/api';
-import { uploadToAppwrite } from '@/lib/appwrite';
+import type { AccessControlConditions } from '@lit-protocol/auth-helpers';
+import { enqueueMemory } from '@/lib/db/local';
+import { encryptMemory } from '@/lib/encryption';
+import { syncPendingMemoriesOnce } from '@/lib/sync';
 import { Alert } from 'react-native';
 import { create } from 'zustand';
 import { useAuthStore } from './auth-store';
@@ -41,6 +42,12 @@ export interface TimelineEntry {
 
   // All media (photos, videos, audio) in one array
   media: EntryMedia[];
+
+  encryptedPayload?: {
+    ciphertext: string;
+    dataHash: string;
+    accessConditions: AccessControlConditions;
+  };
 }
 
 /** Convert API response shape → local TimelineEntry shape */
@@ -66,12 +73,19 @@ function mapResponseToEntry(r: TimelineEntryResponse): TimelineEntry {
   };
 }
 
-/** Upload a local URI to Appwrite and return the remote URL. Throws on failure. */
-async function ensureRemoteUri(uri: string): Promise<string> {
-  if (uri.startsWith('http://') || uri.startsWith('https://')) return uri;
-  const remoteUrl = await uploadToAppwrite(uri);
-  console.log('[Timeline] Uploaded to Appwrite:', remoteUrl);
-  return remoteUrl;
+function buildMemoryPayload(entry: Omit<TimelineEntry, 'id' | 'createdAt'>): string {
+  return JSON.stringify({
+    type: entry.type,
+    mood: entry.mood || null,
+    caption: entry.caption || null,
+    content: entry.content || null,
+    title: entry.title || null,
+    storyContent: entry.storyContent || null,
+    pageCount: entry.pageCount || null,
+    location: entry.location || null,
+    media: entry.media || [],
+    createdAt: new Date().toISOString(),
+  });
 }
 
 interface TimelineState {
@@ -162,56 +176,58 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
   addEntry: async (entry) => {
     set({ isSaving: true });
     try {
-      // 1. Upload any local media files
-      const uploadedMedia: CreateEntryPayload['media'] = [];
-
-      if (entry.media && entry.media.length > 0) {
-        // Upload all media files in parallel for speed
-        const uploadResults = await Promise.all(
-          entry.media.map(async (m) => {
-            const remoteUri = await ensureRemoteUri(m.uri);
-            const remoteThumbnail = m.thumbnailUri
-              ? await ensureRemoteUri(m.thumbnailUri)
-              : undefined;
-            return {
-              uri: remoteUri,
-              type: m.type,
-              thumbnailUri: remoteThumbnail || null,
-              duration: m.duration || null,
-            };
-          }),
-        );
-        uploadedMedia.push(...uploadResults);
-      }
-
-      // 2. Build payload
-      const payload: CreateEntryPayload = {
-        type: entry.type,
-        mood: entry.mood || null,
-        location: entry.location || null,
-        caption: entry.caption || null,
-        content: entry.content || null,
-        title: entry.title || null,
-        storyContent: entry.storyContent || null,
-        pageCount: entry.pageCount || null,
-        media: uploadedMedia.length > 0 ? uploadedMedia : undefined,
-      };
-
-      // 3. Create entry in backend
-      const { data, error } = await createTimelineEntry(payload);
-      if (error || !data) {
-        console.error('[Timeline] Create error:', error);
-        Alert.alert('Error', 'Failed to save your entry. Please try again.');
+      const { user, isAuthenticated } = useAuthStore.getState();
+      if (!isAuthenticated || !user) {
+        Alert.alert('Error', 'You must be logged in to save memories.');
         return null;
       }
 
-      // 4. Add to local state (prepend, newest first)
-      const newEntry = mapResponseToEntry(data);
-      set((state) => ({ entries: [newEntry, ...state.entries] }));
-      return newEntry;
+      const walletAddress = user.walletAddress;
+      if (!walletAddress) {
+        Alert.alert('Error', 'No embedded wallet found. Please log in again.');
+        return null;
+      }
+
+      const plainPayload = buildMemoryPayload(entry);
+      const encrypted = await encryptMemory(plainPayload, walletAddress);
+
+      const queueId = await enqueueMemory({
+        encrypted_content: encrypted.ciphertext,
+        ciphertext: encrypted.ciphertext,
+        data_hash: encrypted.dataToEncryptHash,
+        access_conditions: JSON.stringify(encrypted.accessControlConditions),
+      });
+
+      const optimisticEntry: TimelineEntry = {
+        id: `local-${queueId}`,
+        type: entry.type,
+        createdAt: new Date(),
+        mood: entry.mood || null,
+        caption: entry.caption,
+        location: entry.location,
+        content: entry.content,
+        title: entry.title,
+        storyContent: entry.storyContent,
+        pageCount: entry.pageCount,
+        media: entry.media || [],
+        encryptedPayload: {
+          ciphertext: encrypted.ciphertext,
+          dataHash: encrypted.dataToEncryptHash,
+          accessConditions: encrypted.accessControlConditions,
+        },
+      };
+
+      set((state) => ({ entries: [optimisticEntry, ...state.entries] }));
+      Alert.alert('Saved', 'Memory saved locally and queued for sync.');
+
+      syncPendingMemoriesOnce().catch((error) => {
+        console.warn('[timeline] background sync failed:', error);
+      });
+
+      return optimisticEntry;
     } catch (err) {
       console.error('[Timeline] addEntry error:', err);
-      Alert.alert('Upload Failed', 'Could not upload media. Entry was not saved.');
+      Alert.alert('Save Failed', 'Could not save your memory. Please try again.');
       return null;
     } finally {
       set({ isSaving: false });
