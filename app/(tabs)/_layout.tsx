@@ -49,6 +49,13 @@ export default function TabLayout() {
           href: null,
         }}
       />
+      <Tabs.Screen
+        name="shared"
+        options={{
+          title: 'Shared',
+          href: null,
+        }}
+      />
     </Tabs>
   );
 }
