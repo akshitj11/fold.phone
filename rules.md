@@ -16,7 +16,7 @@ components/            → Reusable UI components, organized by feature
 constants/theme.ts     → The ONLY source of truth for colors and typography
 lib/api.ts             → The ONLY way to talk to the backend
 lib/store/             → Zustand stores for global state
-lib/auth-context.tsx   → Authentication context
+lib/auth-context.tsx   → Auth compatibility wrapper for Zustand store
 fold.config.js         → The ONLY source of truth for app strings, copy, links
 assets/images/         → All static image assets
 ```
@@ -50,14 +50,14 @@ assets/images/         → All static image assets
 ## 4. API Calls
 
 - **Always use `apiRequest()`** from `lib/api.ts` — never call `fetch()` directly.
-- `apiRequest` handles: auth cookie injection, error normalization, and base URL.
+- `apiRequest` handles: privy bearer token injection, error normalization, and base URL.
 - Pattern:
   ```ts
   const { data, error } = await apiRequest<ResponseType>('/api/endpoint', { method: 'POST', body: JSON.stringify(payload) });
   if (error) { /* handle error */ return; }
   // use data
   ```
-- The API base URL is `https://backend.fold.taohq.org` (hardcoded in `lib/api.ts`). Do not duplicate this.
+- The API base URL comes from EXPO_PUBLIC_API_URL in .env. Do not duplicate API hosts in screens/components.
 
 ---
 
@@ -119,9 +119,9 @@ assets/images/         → All static image assets
 
 ## 11. Media Handling
 
-- Photo/video upload uses `expo-image-picker` → uploads to S3 via `/api/upload`.
+- Photo/video flows use expo-image-picker; encrypted payload sync runs through /api/upload/ipfs.
 - Audio recording uses `expo-audio`.
-- All media is stored in `assets/images/` (local) or uploaded to S3 (remote user content).
+- All media is stored in `assets/images/` (local) or relayed to IPFS (remote encrypted content).
 - Thumbnails and preview URIs are stored alongside media entries in the backend.
 
 ---
@@ -130,5 +130,5 @@ assets/images/         → All static image assets
 
 - **Never commit `google-services.json`, `.env`, or any secret files**.
 - `google-services.json` is in `.gitignore` — keep it local only.
-- Session cookies are stored in `expo-secure-store` (not AsyncStorage).
+- Requests use Privy access tokens in Authorization bearer headers.
 - Biometric lock is implemented in `lib/biometric-lock.tsx` for additional protection.

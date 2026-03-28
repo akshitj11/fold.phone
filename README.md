@@ -19,8 +19,8 @@ Fold is a mobile application built with React Native and Expo, featuring a beaut
 * **Runtime:** Node.js (deployment-ready for Vercel/Cloudflare)
 * **Database:** [Neon](https://neon.tech/) (Serverless Postgres)
 * **ORM:** [Drizzle ORM](https://orm.drizzle.team/)
-* **Authentication:** [Better Auth](https://better-auth.com/)
-* **Storage:** AWS S3 (via `@aws-sdk/client-s3`)
+* **Authentication:** Privy email OTP + embedded wallets (@privy-io/expo)
+* **Storage:** IPFS via backend relay (Pinata) + on-chain CID recording on Polygon Amoy
 * **Language:** TypeScript
 
 ---
@@ -40,7 +40,7 @@ This repository is organized into two main parts: the frontend mobile app and th
 └── fold.backend/         # Backend: Hono API Server
     ├── src/
     │   ├── db/           # Drizzle schema and connection instances
-    │   ├── lib/          # Auth config, S3 clients, middleware
+    │   ├── lib/          # Privy auth config, IPFS relay + blockchain middleware
     │   └── routes/       # API endpoints (auth, timeline, profile, connects)
     ├── drizzle/          # Database migrations
     └── drizzle.config.ts # Drizzle configuration
@@ -55,8 +55,8 @@ This repository is organized into two main parts: the frontend mobile app and th
 * npm or pnpm
 * EAS CLI (`npm install -g eas-cli`)
 * A [Neon](https://neon.tech/) Postgres database URL
-* AWS S3 credentials (or compatible object storage like R2/Spaces)
-* Better Auth JWT secrets
+* Privy app credentials
+* Pinata + Polygon Amoy relay credentials in backend
 
 ### 1. Backend Setup
 
@@ -75,15 +75,14 @@ Set up your environment variables. Create a `.env` file in `fold.backend/` based
 # Database
 DATABASE_URL="postgres://user:password@ep-cool-resonance-123.neon.tech/fold"
 
-# Authentication (Better Auth)
-BETTER_AUTH_SECRET="your-super-secret-key"
-BETTER_AUTH_URL="http://localhost:3000"
+# Authentication (Privy + Wallet Linking)
+PRIVY_APP_ID="your-privy-app-id"
+PRIVY_APP_SECRET="your-privy-app-secret"
 
-# S3 Storage (For Photos/Videos/Audio)
-S3_BUCKET_NAME="your-bucket-name"
-S3_REGION="us-east-1"
-S3_ACCESS_KEY="your-access-key"
-S3_SECRET_KEY="your-secret-key"
+# Storage + Chain Relay
+PINATA_JWT="your-pinata-jwt"
+POLYGON_AMOY_RPC_URL="https://rpc-amoy.polygon.technology"
+PIMLICO_API_KEY="your-pimlico-key"
 ```
 
 Push the database schema to Neon:
@@ -113,6 +112,8 @@ Set up your environment variables. Create a `.env` file in the root directory:
 ```env
 # Point this to your local backend IP or production URL
 # Note: For physical devices testing locally, use your machine's local IP (e.g., 192.168.1.X) instead of localhost
+EXPO_PUBLIC_PRIVY_APP_ID=""
+EXPO_PUBLIC_PRIVY_CLIENT_ID=""
 EXPO_PUBLIC_API_URL="http://localhost:3000"
 ```
 
@@ -137,7 +138,9 @@ npx expo start
 * **Rich Media:** Add photos, videos, audio notes, and text entries.
 * **Connections:** Connect with partners or friends via invite codes or direct requests to share memories.
 * **Profiles & Streaks:** Track activity levels, earn badges (Early Bird, On Fire, Centurion), and maintain memory creation streaks.
-* **Shared Memories:** Selectively share specific timeline entries with your active connections.
+* **Shared Memories:** Receive encrypted memories and decrypt locally with Lit session signatures.
+* **Offline-first Queue:** Memories are encrypted on-device, stored in SQLite, and synced in the background.
+* **Web3 Storage + Chain:** Encrypted payloads relay to IPFS and CID records are written on Polygon Amoy.
 * **Push Notifications:** Powered by Expo Push to keep users engaged with connection requests and shared memories.
 
 ---
