@@ -1,4 +1,5 @@
-import { AccessControlConditions, encryptString } from '@lit-protocol/auth-helpers';
+import type { AccessControlConditions } from '@lit-protocol/types';
+import { encryptString } from '@lit-protocol/auth-helpers';
 import { getLitClient } from '@/lib/lit';
 
 export interface EncryptedMemoryPayload {
@@ -7,9 +8,7 @@ export interface EncryptedMemoryPayload {
   accessControlConditions: AccessControlConditions;
 }
 
-export function createWalletAccessControlConditions(
-  walletAddress: string,
-): AccessControlConditions {
+export function createWalletAccessControlConditions(walletAddress: string): AccessControlConditions {
   return [
     {
       contractAddress: '',
@@ -61,5 +60,11 @@ export async function decryptMemory(
   });
 
   if (typeof decrypted === 'string') return decrypted;
+
+  if (decrypted && typeof decrypted === 'object' && 'decryptedData' in (decrypted as any)) {
+    const data = (decrypted as { decryptedData: Uint8Array }).decryptedData;
+    return new TextDecoder().decode(data);
+  }
+
   return new TextDecoder().decode(decrypted as Uint8Array<ArrayBufferLike>);
 }

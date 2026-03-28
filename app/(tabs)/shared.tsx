@@ -1,9 +1,12 @@
 import { TimelineColors } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { decryptMemory } from '@/lib/encryption';
+import { getLitClient } from '@/lib/lit';
 import { useTimelineStore } from '@/lib/store/timeline-store';
-import { usePrivy } from '@privy-io/expo';
+import { useEmbeddedWallet, usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
+import { LitAccessControlConditionResource } from '@lit-protocol/auth-helpers';
+import { LIT_ABILITY } from '@lit-protocol/constants';
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -41,6 +44,7 @@ function MemoryCard({ item, onPress }: { item: SharedMemory; onPress: () => void
 export default function SharedTabScreen() {
   const router = useRouter();
   const { getAccessToken } = usePrivy();
+  const embeddedWallet = useEmbeddedWallet();
 
   const [items, setItems] = useState<SharedMemory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,12 +70,44 @@ export default function SharedTabScreen() {
 
   const handleOpenMemory = async (item: SharedMemory) => {
     try {
-      const token = await getAccessToken();
+      if (!embeddedWallet.account?.address) return;
+      const litClient = await getLitClient();
+      const resource = await LitAccessControlConditionResource.generateResourceString(
+        item.accessControlConditions,
+        item.dataToEncryptHash,
+      );
+
+      const sessionSigs = await litClient.getSessionSigs({
+        chain: 'polygon',
+        resourceAbilityRequests: [
+          {
+            resource: new LitAccessControlConditionResource(resource),
+            ability: LIT_ABILITY.AccessControlConditionDecryption,
+          },
+        ],
+        authNeededCallback: async ({ uri, expiration, resourceAbilityRequests }) => {
+          const token = await getAccessToken();
+          if (!token) throw new Error('missing privy access token');
+
+          return {
+            sig: token,
+            derivedVia: 'privy-jwt',
+            signedMessage: JSON.stringify({
+              uri,
+              expiration,
+              resources: resourceAbilityRequests,
+            }),
+            address: embeddedWallet.account?.address || '',
+            algo: 'secp256k1',
+          };
+        },
+      });
+
       const decrypted = await decryptMemory(
         item.ciphertext,
         item.dataToEncryptHash,
         item.accessControlConditions,
-        token ? ({ privyJwt: token } as any) : {},
+        sessionSigs as unknown as Record<string, unknown>,
       );
 
       let parsed: any = null;
