@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { useEmbeddedEthereumWallet, usePrivy, PrivyProvider } from '@privy-io/expo';
+import { useEmbeddedWallet, usePrivy, PrivyProvider } from '@privy-io/expo';
 import { useFonts } from 'expo-font';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as NavigationBar from 'expo-navigation-bar';
@@ -36,7 +36,7 @@ export const unstable_settings = {
 // Replaces the old nested AuthProvider → TimelineProvider → AudioProvider → SettingsProvider.
 function StoreInitializer({ children }: { children: React.ReactNode }) {
   const { isReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
-  const { wallets } = useEmbeddedEthereumWallet();
+  const embeddedWallet = useEmbeddedWallet();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const authUser = useAuthStore((s) => s.user);
 
@@ -70,7 +70,7 @@ function StoreInitializer({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const walletAddress = wallets?.[0]?.address || null;
+    const walletAddress = embeddedWallet.account?.address || null;
     useAuthStore.getState().setPrivyAuth({
       isAuthenticated: true,
       user: {
@@ -79,7 +79,7 @@ function StoreInitializer({ children }: { children: React.ReactNode }) {
         walletAddress,
       },
     });
-  }, [isReady, authenticated, privyUser, wallets]);
+  }, [isReady, authenticated, privyUser, embeddedWallet.account?.address]);
 
   // When auth state changes, propagate to timeline + settings stores.
   // Only fire loadAll once auth has been resolved (skip the initial false→false mount).

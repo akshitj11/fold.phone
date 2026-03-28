@@ -3,9 +3,9 @@ import { AtIcon, LockIcon } from '@/components/icons';
 import { OnboardingColors } from '@/constants/theme';
 import { apiRequest } from '@/lib/api';
 import { useAuthStore } from '@/lib/store/auth-store';
-import { useEmbeddedEthereumWallet, useLoginWithEmail, usePrivy } from '@privy-io/expo';
+import { useEmbeddedWallet, useLoginWithEmail, usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -26,7 +26,7 @@ const SCALE = SCREEN_WIDTH / 393;
 export default function AuthScreen() {
   const router = useRouter();
   const { user, authenticated } = usePrivy();
-  const { wallets } = useEmbeddedEthereumWallet();
+  const embeddedWallet = useEmbeddedWallet();
   const { sendCode, loginWithCode, state } = useLoginWithEmail();
 
   const [email, setEmail] = useState('');
@@ -40,10 +40,7 @@ export default function AuthScreen() {
     state.status === 'sending-code' ||
     state.status === 'submitting-code';
 
-  const embeddedWalletAddress = useMemo(() => {
-    const firstWallet = wallets?.[0];
-    return firstWallet?.address || null;
-  }, [wallets]);
+  const embeddedWalletAddress = embeddedWallet.account?.address || null;
 
   const linkWalletAndFinalize = useCallback(async (walletAddress: string | null) => {
     if (finalizedRef.current) return;
