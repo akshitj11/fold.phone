@@ -8,11 +8,17 @@ const SCALE = SCREEN_WIDTH / 393;
 interface AuthButtonProps {
   title: string;
   onPress?: () => void;
+  disabled?: boolean;
 }
 
-export function AuthButton({ title, onPress }: AuthButtonProps) {
+export function AuthButton({ title, onPress, disabled = false }: AuthButtonProps) {
   return (
-    <TouchableOpacity style={styles.container} onPress={onPress} activeOpacity={0.9}>
+    <TouchableOpacity
+      style={[styles.container, disabled && styles.containerDisabled]}
+      onPress={onPress}
+      activeOpacity={0.9}
+      disabled={disabled}
+    >
       <Text style={styles.text}>{title}</Text>
     </TouchableOpacity>
   );
@@ -25,6 +31,9 @@ const styles = StyleSheet.create({
     height: 60 * SCALE,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  containerDisabled: {
+    opacity: 0.55,
   },
   text: {
     fontSize: 18 * SCALE,

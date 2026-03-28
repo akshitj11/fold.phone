@@ -2,6 +2,7 @@ import { TimelineColors } from '@/constants/theme';
 import { useAuth } from '@/lib/auth-context';
 import { useBiometricLock } from '@/lib/biometric-lock';
 import { useSettings } from '@/lib/settings-context';
+import { usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
@@ -26,6 +27,7 @@ const SCALE = SCREEN_WIDTH / 393;
 export default function SettingsScreen() {
   const router = useRouter();
   const { signOut } = useAuth();
+  const { logout } = usePrivy();
   const { isEnabled, isAvailable, biometricType, enable, disable } = useBiometricLock();
   const {
     autoLocation,
@@ -107,6 +109,7 @@ export default function SettingsScreen() {
           onPress: async () => {
             setIsLoggingOut(true);
             try {
+              await logout();
               await signOut();
               // The auth context will update hasSeenOnboarding to false
               // and the route protection will redirect to onboarding

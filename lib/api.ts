@@ -1,7 +1,12 @@
-import * as SecureStore from "expo-secure-store";
+const API_BASE = process.env.EXPO_PUBLIC_API_URL || "http://localhost:3000";
 
-const API_BASE = "https://backend.fold.taohq.org";
-const COOKIE_STORAGE_KEY = "fold_cookie";
+type AccessTokenGetter = () => Promise<string | null>;
+
+let accessTokenGetter: AccessTokenGetter | null = null;
+
+export function setAccessTokenGetter(getter: AccessTokenGetter | null) {
+  accessTokenGetter = getter;
+}
 
 export interface User {
   id: string;
@@ -14,26 +19,12 @@ export interface User {
   updatedAt: string;
 }
 
-/**
- * Get stored cookies for authenticated requests
- * The expoClient stores cookies in SecureStore with this key
- */
-async function getCookie(): Promise<string> {
+async function getAccessToken(): Promise<string | null> {
   try {
-    const cookieJson = await SecureStore.getItemAsync(COOKIE_STORAGE_KEY);
-    if (!cookieJson) return "";
-
-    const parsed = JSON.parse(cookieJson);
-    return Object.entries(parsed)
-      .filter(([_, value]: [string, any]) => {
-        // Filter out expired cookies
-        if (value.expires && new Date(value.expires) < new Date()) return false;
-        return true;
-      })
-      .map(([key, value]: [string, any]) => `${key}=${value.value}`)
-      .join("; ");
+    if (!accessTokenGetter) return null;
+    return await accessTokenGetter();
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -45,19 +36,17 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<{ data: T | null; error: string | null }> {
   try {
-    const cookie = await getCookie();
+    const token = await getAccessToken();
 
     const headers: HeadersInit = {
       "Content-Type": "application/json",
-      "expo-origin": "fold://",
-      ...(cookie ? { Cookie: cookie } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     };
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
       ...options,
       headers,
-      credentials: "omit", // We handle cookies manually for React Native
     });
 
     const json = await response.json();
@@ -119,7 +108,7 @@ export async function uploadAvatar(
   mimeType: string = "image/jpeg"
 ): Promise<{ data: { url: string; id: string } | null; error: string | null }> {
   try {
-    const cookie = await getCookie();
+    const token = await getAccessToken();
 
     // Create form data
     const formData = new FormData();
@@ -135,12 +124,9 @@ export async function uploadAvatar(
     const response = await fetch(`${API_BASE}/api/upload/avatar`, {
       method: "POST",
       headers: {
-        "expo-origin": "fold://",
-        ...(cookie ? { Cookie: cookie } : {}),
-        // Note: Don't set Content-Type for FormData, let fetch set it with boundary
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData,
-      credentials: "omit",
     });
 
     const json = await response.json();
@@ -817,7 +803,7 @@ export async function uploadMedia(
   mimeType: string = "image/jpeg"
 ): Promise<{ url: string | null; error: string | null }> {
   try {
-    const cookie = await getCookie();
+    const token = await getAccessToken();
     const formData = new FormData();
     const filename = uri.split("/").pop() || "file";
 
@@ -834,11 +820,9 @@ export async function uploadMedia(
     const response = await fetch(`${API_BASE}/api/upload`, {
       method: "POST",
       headers: {
-        "expo-origin": "fold://",
-        ...(cookie ? { Cookie: cookie } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: formData,
-      credentials: "omit",
       signal: controller.signal,
     });
 

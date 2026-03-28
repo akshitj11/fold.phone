@@ -1,21 +1,31 @@
-import { authClient } from '@/lib/auth-client';
-import { getProfile } from '@/lib/api';
 import * as SecureStore from 'expo-secure-store';
 import { create } from 'zustand';
 
 const ONBOARDING_KEY = 'fold_onboarding_complete';
 
+export interface AuthUser {
+  id: string;
+  email?: string | null;
+  name?: string | null;
+  image?: string | null;
+  avatar?: string | null;
+  walletAddress?: string | null;
+}
+
 interface AuthState {
-  user: any | null;
+  user: AuthUser | null;
   isAuthenticated: boolean;
   hasSeenOnboarding: boolean | null;
   isLoading: boolean;
 
-  // Actions
   initialize: () => Promise<void>;
+  setPrivyAuth: (params: {
+    isAuthenticated: boolean;
+    user: AuthUser | null;
+  }) => void;
   refreshAuth: () => Promise<void>;
   signOut: () => Promise<void>;
-  updateUser: (userData: Partial<any>) => void;
+  updateUser: (userData: Partial<AuthUser>) => void;
   completeOnboarding: () => Promise<void>;
 }
 
@@ -25,37 +35,21 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   hasSeenOnboarding: null,
   isLoading: true,
 
+  setPrivyAuth: ({ isAuthenticated, user }) => {
+    set({
+      isAuthenticated,
+      user,
+      isLoading: false,
+    });
+  },
+
   refreshAuth: async () => {
     try {
       const onboardingComplete = await SecureStore.getItemAsync(ONBOARDING_KEY);
-      console.log('[AUTH] Onboarding complete:', onboardingComplete);
       set({ hasSeenOnboarding: onboardingComplete === 'true' });
-
-      const { data: sessionData } = await authClient.getSession();
-      console.log('[AUTH] Session:', sessionData?.user ? 'exists' : 'none');
-
-      if (sessionData?.user) {
-        const { data: profileData, error: profileError } = await getProfile();
-        console.log('[AUTH] Profile fetch:', profileData ? 'success' : 'failed', profileError || '');
-
-        if (profileData) {
-          const mergedUser = {
-            ...sessionData.user,
-            ...profileData,
-            image: profileData.avatar || profileData.image || null,
-            avatar: profileData.avatar || profileData.image || null,
-          };
-          console.log('[AUTH] User avatar:', mergedUser.image || mergedUser.avatar || 'none');
-          set({ user: mergedUser, isAuthenticated: true });
-        } else {
-          set({ user: sessionData.user, isAuthenticated: true });
-        }
-      } else {
-        set({ user: null, isAuthenticated: false });
-      }
     } catch (error) {
       console.error('Error refreshing auth:', error);
-      set({ hasSeenOnboarding: false, user: null, isAuthenticated: false });
+      set({ hasSeenOnboarding: false, user: null, isAuthenticated: false, isLoading: false });
     }
   },
 
@@ -66,9 +60,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   signOut: async () => {
     try {
-      await authClient.signOut();
       await SecureStore.deleteItemAsync(ONBOARDING_KEY);
-      set({ user: null, isAuthenticated: false, hasSeenOnboarding: false });
+      set({ user: null, isAuthenticated: false, hasSeenOnboarding: false, isLoading: false });
     } catch (error) {
       console.error('Sign out error:', error);
       throw error;
@@ -86,7 +79,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  updateUser: (userData: Partial<any>) => {
+  updateUser: (userData: Partial<AuthUser>) => {
     const prev = get().user;
     if (!prev) return;
     const updated = {
@@ -95,7 +88,6 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       image: userData.avatar || userData.image || prev.image,
       avatar: userData.avatar || userData.image || prev.avatar,
     };
-    console.log('[AUTH] User updated directly:', updated.image || updated.avatar);
     set({ user: updated });
   },
 }));

@@ -1,18 +1,23 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useEmbeddedEthereumWallet, usePrivy, PrivyProvider } from '@privy-io/expo';
 import { useFonts } from 'expo-font';
+import * as LocalAuthentication from 'expo-local-authentication';
 import * as NavigationBar from 'expo-navigation-bar';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as ScreenCapture from 'expo-screen-capture';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef } from 'react';
-import { Platform } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import 'react-native-reanimated';
 import 'react-native-url-polyfill/auto';
 
+import { setAccessTokenGetter } from '@/lib/api';
+import { initializeLitClient } from '@/lib/lit';
 import { registerPushToken } from '@/lib/store/notification-store';
+import { startSyncWorker, stopSyncWorker } from '@/lib/sync';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { BiometricLockProvider } from '@/lib/biometric-lock';
@@ -30,13 +35,51 @@ export const unstable_settings = {
 // Initializes all Zustand stores on mount and reacts to auth changes.
 // Replaces the old nested AuthProvider → TimelineProvider → AudioProvider → SettingsProvider.
 function StoreInitializer({ children }: { children: React.ReactNode }) {
+  const { isReady, authenticated, user: privyUser, getAccessToken } = usePrivy();
+  const { wallets } = useEmbeddedEthereumWallet();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const user = useAuthStore((s) => s.user);
+  const authUser = useAuthStore((s) => s.user);
 
   // Boot auth on mount
   useEffect(() => {
     useAuthStore.getState().initialize();
+    initializeLitClient().catch((error) => {
+      console.warn('[lit] initialization failed:', error);
+    });
   }, []);
+
+  useEffect(() => {
+    setAccessTokenGetter(async () => {
+      const token = await getAccessToken();
+      return token || null;
+    });
+
+    return () => {
+      setAccessTokenGetter(null);
+    };
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    if (!authenticated || !privyUser) {
+      useAuthStore.getState().setPrivyAuth({
+        isAuthenticated: false,
+        user: null,
+      });
+      return;
+    }
+
+    const walletAddress = wallets?.[0]?.address || null;
+    useAuthStore.getState().setPrivyAuth({
+      isAuthenticated: true,
+      user: {
+        id: privyUser.id,
+        email: privyUser.email?.address || null,
+        walletAddress,
+      },
+    });
+  }, [isReady, authenticated, privyUser, wallets]);
 
   // When auth state changes, propagate to timeline + settings stores.
   // Only fire loadAll once auth has been resolved (skip the initial false→false mount).
@@ -45,7 +88,7 @@ function StoreInitializer({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     // Always propagate auth state to timeline store
-    useTimelineStore.getState().onAuthChange(isAuthenticated, user?.id ?? null);
+    useTimelineStore.getState().onAuthChange(isAuthenticated, authUser?.id ?? null);
 
     // Register push token when authenticated
     if (isAuthenticated) {
@@ -60,7 +103,19 @@ function StoreInitializer({ children }: { children: React.ReactNode }) {
       // User logged out — reload to reset settings
       useSettingsStore.getState().loadAll();
     }
-  }, [isAuthenticated, user?.id]);
+  }, [isAuthenticated, authUser?.id]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      stopSyncWorker();
+      return;
+    }
+
+    startSyncWorker();
+    return () => {
+      stopSyncWorker();
+    };
+  }, [isAuthenticated]);
 
   // Retry loop: if any store failed to load data (e.g. slow/offline network),
   // automatically retry with increasing delays until success.
@@ -106,7 +161,7 @@ function StoreInitializer({ children }: { children: React.ReactNode }) {
 }
 
 // Excluded route segments where screenshots are always allowed
-const EXCLUDED_ROOTS = new Set(['onboarding', 'auth', 'signup']);
+const EXCLUDED_ROOTS = new Set(['onboarding', 'auth']);
 
 // Reactively enables/disables screen capture based on the current route and
 // the user's screenshotProtection preference.
@@ -161,7 +216,7 @@ function ScreenCaptureGuard() {
 }
 
 // Protected route wrapper
-// Flow: onboarding (first time) → auth/signup → (tabs)
+// Flow: onboarding (first time) → auth → (tabs)
 function useProtectedRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const hasSeenOnboarding = useAuthStore((s) => s.hasSeenOnboarding);
@@ -179,7 +234,7 @@ function useProtectedRoute() {
     if (currentRoute === undefined) return;
 
     const isOnboarding = currentRoute === 'onboarding';
-    const isAuthScreen = currentRoute === 'auth' || currentRoute === 'signup';
+    const isAuthScreen = currentRoute === 'auth';
 
     console.log('[NAV] Route check:', { currentRoute, isAuthenticated, hasSeenOnboarding, isOnboarding, isAuthScreen });
 
@@ -248,7 +303,6 @@ function RootLayoutNav() {
           <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="onboarding" />
             <Stack.Screen name="auth" />
-            <Stack.Screen name="signup" />
             <Stack.Screen name="(tabs)" />
             <Stack.Screen name="edit-profile" />
             <Stack.Screen name="change-password" />
@@ -277,10 +331,15 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  const appId = process.env.EXPO_PUBLIC_PRIVY_APP_ID || '';
+  const clientId = process.env.EXPO_PUBLIC_PRIVY_CLIENT_ID || '';
+
   return (
-    <StoreInitializer>
-      <RootLayoutWithLock />
-    </StoreInitializer>
+    <PrivyProvider appId={appId} clientId={clientId}>
+      <StoreInitializer>
+        <RootLayoutWithLock />
+      </StoreInitializer>
+    </PrivyProvider>
   );
 }
 
@@ -288,7 +347,72 @@ function RootLayoutWithLock() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   return (
     <BiometricLockProvider isAuthenticated={isAuthenticated}>
-      <RootLayoutNav />
+      <ForegroundBiometricGate>
+        <RootLayoutNav />
+      </ForegroundBiometricGate>
     </BiometricLockProvider>
   );
+}
+
+function ForegroundBiometricGate({ children }: { children: React.ReactNode }) {
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const [isUnlocked, setIsUnlocked] = useState(false);
+  const appState = useRef<AppStateStatus>(AppState.currentState);
+  const authInFlight = useRef(false);
+
+  const authenticate = async () => {
+    if (!isAuthenticated) {
+      setIsUnlocked(true);
+      return;
+    }
+
+    if (authInFlight.current) return;
+    authInFlight.current = true;
+
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Unlock Fold',
+        fallbackLabel: 'Use Passcode',
+        disableDeviceFallback: false,
+      });
+      setIsUnlocked(result.success);
+    } finally {
+      authInFlight.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setIsUnlocked(true);
+      return;
+    }
+
+    setIsUnlocked(false);
+    authenticate();
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (
+        appState.current.match(/inactive|background/) &&
+        nextState === 'active' &&
+        isAuthenticated
+      ) {
+        setIsUnlocked(false);
+        authenticate();
+      }
+
+      appState.current = nextState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [isAuthenticated]);
+
+  if (!isUnlocked) {
+    return null;
+  }
+
+  return <>{children}</>;
 }

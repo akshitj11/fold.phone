@@ -1,11 +1,11 @@
-import { AuthButton, AuthInput, GoogleSignInButton, OrDivider } from '@/components/auth';
+import { AuthButton, AuthInput } from '@/components/auth';
 import { AtIcon, LockIcon } from '@/components/icons';
 import { OnboardingColors } from '@/constants/theme';
-import { useAuth } from '@/lib/auth-context';
-import { authClient } from '@/lib/auth-client';
+import { apiRequest } from '@/lib/api';
+import { useAuthStore } from '@/lib/store/auth-store';
+import { useEmbeddedEthereumWallet, useLoginWithEmail, usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import { maybeCompleteAuthSession } from 'expo-web-browser';
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -20,92 +20,113 @@ import {
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-// Required for web browser auth session to complete when app reopens
-maybeCompleteAuthSession();
-
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const SCALE = SCREEN_WIDTH / 393;
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { refreshAuth } = useAuth();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const { user, authenticated } = usePrivy();
+  const { wallets } = useEmbeddedEthereumWallet();
+  const { sendCode, loginWithCode, state } = useLoginWithEmail();
 
-  const handleEnterFold = async () => {
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const finalizedRef = useRef(false);
+
+  const isAwaitingCode = state.status === 'awaiting-code-input' || state.status === 'submitting-code';
+  const isBusy =
+    isSubmitting ||
+    state.status === 'sending-code' ||
+    state.status === 'submitting-code';
+
+  const embeddedWalletAddress = useMemo(() => {
+    const firstWallet = wallets?.[0];
+    return firstWallet?.address || null;
+  }, [wallets]);
+
+  const linkWalletAndFinalize = async (walletAddress: string | null) => {
+    if (finalizedRef.current) return;
+    finalizedRef.current = true;
+
+    if (walletAddress) {
+      const walletLinkResult = await apiRequest('/api/auth/wallet-link', {
+        method: 'POST',
+        body: JSON.stringify({ walletAddress }),
+      });
+
+      if (walletLinkResult.error) {
+        console.warn('[auth] wallet link failed:', walletLinkResult.error);
+      }
+    }
+
+    const privyUserId = user?.id || email;
+    useAuthStore.getState().setPrivyAuth({
+      isAuthenticated: true,
+      user: {
+        id: privyUserId,
+        email,
+        walletAddress,
+      },
+    });
+
+    router.replace('/(tabs)' as any);
+  };
+
+  const handleSendCode = async () => {
     Keyboard.dismiss();
 
     if (!email.trim()) {
       Alert.alert('Error', 'Email is required');
       return;
     }
-    if (!password) {
-      Alert.alert('Error', 'Password is required');
+
+    setIsSubmitting(true);
+    try {
+      const result = await sendCode({ email: email.trim() });
+      if (!result.success) {
+        Alert.alert('Error', 'Unable to send code. Please try again.');
+      }
+    } catch (error) {
+      console.error('[auth] send code failed:', error);
+      Alert.alert('Error', 'Unable to send code. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    Keyboard.dismiss();
+
+    if (!email.trim()) {
+      Alert.alert('Error', 'Email is required');
       return;
     }
 
-    setIsLoading(true);
-    try {
-      const { data, error } = await authClient.signIn.email({
-        email,
-        password,
-      });
+    if (!code.trim() || code.trim().length !== 6) {
+      Alert.alert('Error', 'Enter a valid 6 digit code');
+      return;
+    }
 
-      if (error) {
-        Alert.alert('Login Failed', error.message || 'Invalid credentials');
-      } else {
-        console.log('Login successful:', data?.user);
-        // Refresh auth context to update state
-        await refreshAuth();
-        router.replace('/(tabs)' as any);
-      }
-    } catch (err) {
-      console.error('Unexpected error during login:', err);
-      Alert.alert('Error', 'An unexpected error occurred');
+    setIsSubmitting(true);
+    try {
+      await loginWithCode({ code: code.trim(), email: email.trim() });
+      await linkWalletAndFinalize(embeddedWalletAddress);
+    } catch (error) {
+      console.error('[auth] verify code failed:', error);
+      Alert.alert('Error', 'Invalid code. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setIsGoogleLoading(true);
-    try {
-      // The expoClient plugin automatically handles:
-      // 1. Opening the browser via expo-authorization-proxy
-      // 2. Managing OAuth state
-      // 3. Storing the session cookies
-      const { error } = await authClient.signIn.social({
-        provider: 'google',
-        callbackURL: '/', // Relative URL - expoClient converts to fold://
+  useEffect(() => {
+    if (authenticated && user && !isBusy) {
+      linkWalletAndFinalize(embeddedWalletAddress).catch((error) => {
+        console.error('[auth] finalize login failed:', error);
       });
-
-      if (error) {
-        console.error('Google sign-in error:', error);
-        Alert.alert('Google Sign-In Failed', error.message || 'Could not sign in with Google');
-        return;
-      }
-
-      // If we get here without error, the plugin handled the OAuth flow
-      // Check if we have a session now
-      await refreshAuth();
-      const { data: sessionData } = await authClient.getSession();
-      if (sessionData?.user) {
-        console.log('Google login successful:', sessionData.user);
-        router.replace('/(tabs)' as any);
-      }
-    } catch (err) {
-      console.error('Unexpected error during Google sign-in:', err);
-      Alert.alert('Error', 'An unexpected error occurred');
-    } finally {
-      setIsGoogleLoading(false);
     }
-  };
-
-  const handleCreateAccount = () => {
-    router.replace('/signup' as any);
-  };
+  }, [authenticated, user, embeddedWalletAddress, isBusy]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
@@ -118,7 +139,6 @@ export default function AuthScreen() {
           keyboardShouldPersistTaps="handled"
           bottomOffset={40}
         >
-          {/* App Logo */}
           <View style={styles.logoContainer}>
             <Image
               source={require('@/assets/images/icon.png')}
@@ -127,61 +147,39 @@ export default function AuthScreen() {
             />
           </View>
 
-          {/* Title */}
           <Text style={styles.title}>Fold</Text>
 
-          {/* Subtitle */}
           <Text style={styles.subtitle}>
-            The private space for you raw{'\n'}thoughts, memories, and emotions.
+            The private space for your raw thoughts, memories, and emotions.
           </Text>
 
-          {/* E2E Encryption Label */}
-          <Text style={styles.encryptionLabel}>
-            End - to - End Private
-          </Text>
+          <Text style={styles.encryptionLabel}>End - to - End Private</Text>
 
-          {/* Input Section */}
           <View style={styles.inputSection}>
-            {/* Google Sign-In */}
-            <GoogleSignInButton 
-              onPress={handleGoogleSignIn} 
-              disabled={isGoogleLoading || isLoading}
-            />
-
-            {/* Or Divider */}
-            <OrDivider />
-
-            {/* Email Input */}
             <AuthInput
-              placeholder="Email or Username"
+              placeholder="Email"
               icon={<AtIcon size={20 * SCALE} color="#810100" />}
               value={email}
               onChangeText={setEmail}
               keyboardType="email-address"
             />
 
-            {/* Password Input */}
-            <AuthInput
-              placeholder="Password"
-              icon={<LockIcon size={20 * SCALE} color="#810100" />}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+            {isAwaitingCode && (
+              <AuthInput
+                placeholder="6 digit code"
+                icon={<LockIcon size={20 * SCALE} color="#810100" />}
+                value={code}
+                onChangeText={setCode}
+                keyboardType="number-pad"
+              />
+            )}
 
-            {/* Enter Fold Button */}
             <View style={styles.buttonContainer}>
-              <AuthButton title="Enter Fold" onPress={handleEnterFold} />
-            </View>
-
-            {/* Bottom Text */}
-            <View style={styles.bottomSection}>
-              <Text style={styles.bottomText}>
-                New here?{' '}
-                <Text style={styles.createAccountLink} onPress={handleCreateAccount}>
-                  Create Account
-                </Text>
-              </Text>
+              <AuthButton
+                title={isAwaitingCode ? 'Verify Code' : 'Send Code'}
+                onPress={isAwaitingCode ? handleVerifyCode : handleSendCode}
+                disabled={isBusy}
+              />
             </View>
           </View>
         </KeyboardAwareScrollView>
@@ -235,18 +233,5 @@ const styles = StyleSheet.create({
   },
   buttonContainer: {
     marginTop: 8 * SCALE,
-  },
-  bottomSection: {
-    marginTop: 30 * SCALE,
-    paddingBottom: 20 * SCALE,
-  },
-  bottomText: {
-    fontSize: 14 * SCALE,
-    textAlign: 'center',
-    color: '#181717',
-  },
-  createAccountLink: {
-    color: OnboardingColors.primary,
-    fontWeight: '500',
   },
 });
