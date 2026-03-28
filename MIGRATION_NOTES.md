@@ -4,7 +4,7 @@ This document captures the app-side Web3 migration status and the backend readin
 
 ## Scope Completed (App)
 
-- Better-Auth client flow removed from runtime app paths.
+- Legacy auth client flow removed from runtime app paths.
 - Privy integrated for email OTP auth and embedded wallet access.
 - API client uses Privy bearer token injection with `EXPO_PUBLIC_API_URL`.
 - Lit client initialized on app startup (`datil-dev` network).
@@ -93,6 +93,4 @@ These endpoints must exist and return the expected shapes for the app flow to wo
 
 ## Known Non-Blocking Items
 
-- Repository still contains historical reference docs under `.info2ai/` that mention Better-Auth/S3; these are archival notes and not runtime app code.
-- Existing lint baseline has unrelated legacy warnings/errors outside this migration scope.
-- lib/api.ts still contains a legacy uploadMedia helper targeting /api/upload; it is currently unused by app runtime and can be removed in a dedicated follow-up if backend endpoint is fully retired.
+- Existing lint baseline has unrelated historical warnings/errors outside this migration scope.
