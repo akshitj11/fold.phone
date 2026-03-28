@@ -5,7 +5,7 @@ import { apiRequest } from '@/lib/api';
 import { useAuthStore } from '@/lib/store/auth-store';
 import { useEmbeddedEthereumWallet, useLoginWithEmail, usePrivy } from '@privy-io/expo';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Dimensions,
@@ -45,7 +45,7 @@ export default function AuthScreen() {
     return firstWallet?.address || null;
   }, [wallets]);
 
-  const linkWalletAndFinalize = async (walletAddress: string | null) => {
+  const linkWalletAndFinalize = useCallback(async (walletAddress: string | null) => {
     if (finalizedRef.current) return;
     finalizedRef.current = true;
 
@@ -71,7 +71,7 @@ export default function AuthScreen() {
     });
 
     router.replace('/(tabs)' as any);
-  };
+  }, [email, router, user?.id]);
 
   const handleSendCode = async () => {
     Keyboard.dismiss();
@@ -126,7 +126,7 @@ export default function AuthScreen() {
         console.error('[auth] finalize login failed:', error);
       });
     }
-  }, [authenticated, user, embeddedWalletAddress, isBusy]);
+  }, [authenticated, user, embeddedWalletAddress, isBusy, linkWalletAndFinalize]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
